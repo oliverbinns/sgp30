@@ -1,3 +1,5 @@
+'''Module for interfacing with SGP30 chip over i2c on Raspberry Pi'''
+
 import smbus
 import struct
 import statistics
@@ -9,6 +11,12 @@ address = 0x58
 bus = smbus.SMBus(channel)
 
 def getSerial():
+    '''Get the serial number of the attached SGP sensor
+
+    Returns:
+        serial (:obj:`list`): Three member list with the serial number of
+            the attached SGP30
+    '''
     cmd = [0x36, 0x82]
 
     cmd_byte = cmd[0]
@@ -31,7 +39,13 @@ def getSerial():
 
     return serial
 
+
 def initSensor():
+    '''Initialises the SGP30 sensor
+
+    Will start an approx. 15s run of measurements while the sensor initialises.
+    When the warm-up process completes, "Ready" will be printed to the terminal
+    '''
     cmd = [0x20, 0x03]
 
     cmd_byte = cmd[0]
@@ -51,22 +65,47 @@ def initSensor():
 
 
 class Measurement():
-    def __init__(self, data):
+    '''SGP30 measurement object
 
+    Attributes:
+        CO2 (:obj:`int`): Measured eCO2 concentration in ppm. In the event of
+            CRC checksum error, will be False
+        VOC (:obj:`int`): Measured TVOC concentration in ppb. In the event of
+            CRC checksum error, will be False
+        warmup (:obj:`bool`): True if CO2 == 400 and VOC == 0, which are the 
+            default values during warm-up. Used by the sensor initialisation
+            routine to ignore warm-up values.
+    '''
+    def __init__(self, data):
+        '''Initialisation of Measurement object 
+
+        Parameters:
+            data (:obj:`list`): 6-item list of hexadecimal values representing 
+                the bytes returned by the sensor. The first two bytes form the
+                eCO2 value, and the third is the CRC checksum of those bytes,
+                The fourth and fifth bytes form the TVOC value and the sixth
+                is the CRC checksum of those bytes.
+        '''
+
+        # Convert the values to a byte array
         byteData = bytearray(data)
 
+        # Unpack the byte array into an unsigned short and unsigned char 
+        # (big endian bytes)
         CO2, csum1 = struct.unpack_from(">HB", byteData, offset=0)
         VOC, csum2 = struct.unpack_from(">HB", byteData, offset=3)
 
         self.CO2 = CO2
         self.VOC = VOC
 
+        # Check the CRC on the data
         if crc(data[0:2]) != csum1:
             self.CO2 = False
 
         if crc(data[3:5]) != csum2:
             self.VOC = False
 
+        # Check the value to see if it might be from the warm-up of the sensor
         self.warmup = False
 
         if CO2 == 400 and VOC == 0:
@@ -74,6 +113,11 @@ class Measurement():
 
 
 def getMeasurement():
+    ''' Gets a single measurement from the sensor
+
+    Returns:
+        measurement (:obj:`sgp30.Measurement`): An SGP30 measurement object
+    '''
     cmd = [0x20, 0x08]
 
     cmd_byte = cmd[0]
@@ -86,24 +130,16 @@ def getMeasurement():
     return Measurement(resp)
 
 
-def loopMeasurement():
-    initSensor()
-
-    vals = []
-    while(True):
-        sleep(1)
-        meas = getMeasurement()
-        if meas.CO2 is False:
-            print("CRC error")
-        else:
-            vals.append(meas.CO2)
-            if(len(vals) == 10):
-                mean = statistics.mean(vals)
-                print("eCO2 = " + str(mean))
-                vals = []
-
-
 def getRawMeasurement():
+    ''' Gets the raw measurement data from the sensor
+
+    For details on how these values work, see the SGP30 chip specification
+    sheet
+
+    Returns:
+        H2 (:obj:`int`): Raw sensor hydrogen value (see SGP specs)
+        EtOH (:obj:`int`): Raw sensor ethanol value (see SGP specs)
+    '''
     cmd = [0x20, 0x50]
 
     cmd_byte = cmd[0]
@@ -122,10 +158,19 @@ def getRawMeasurement():
 
 
 def crc(data):
+    '''CRC8 algorithm
+
+    Implements a CRC8 algorithm like that used by the SGP30 chip 
+    (initialisation = 0xFF, polynomial = 0x31)
+
+    Parameters:
+        data (:obj:`list`): List of byte values the be checked
+
+    '''
     init = 0xFF
     polynomial = 0x31
     crc = init
-    # calculates 8-Bit checksum with given polynomial
+
     for byte in data:
         crc ^= byte
         for _ in range(8):
