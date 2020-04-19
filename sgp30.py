@@ -1,8 +1,8 @@
 '''Module for interfacing with SGP30 chip over i2c on Raspberry Pi'''
 
 import smbus
+import math
 import struct
-import statistics
 from time import sleep
 
 channel = 1
@@ -156,6 +156,44 @@ def getRawMeasurement():
 
     return H2, EtOH
 
+def setHumidty(RH,T):
+    '''Set the humidty compensation from an external source
+
+    Parameters:
+        RH (:obj:`float`): Relative humidty
+        T (:obj:`float`): Temperature
+
+    Returns:
+        abshHum (:obj:`float`): Absolute humidty in g/m^3
+    '''
+
+    # Convert RH and T to absolute humidity in g/m^3
+    absHum = (RH / 100) * 6.112 * math.exp((17.62 * T) / (243.12 + T))
+    absHum = absHum / (273.15 + T)
+    absHum = 216.7 * absHum
+
+    if absHum > 255:
+        return False
+
+    fpart, ipart = math.modf(absHum)
+    ipart = int(ipart)
+    quantized_fpart = int(round(fpart * 256))
+    humidity_word = (ipart & 0xff) << 8 | (quantized_fpart & 0xff)
+    word_bytes = bytearray(struct.pack('>H', humidity_word))
+    word_bytes.append(crc(word_bytes))
+
+    # Send the value to the chip
+    # 0x2061
+    cmd = [0x20, 0x61]
+
+    cmd_byte = cmd[0]
+    arg_bytes = list(cmd[1:])
+    arg_bytes.extend(word_bytes)
+
+    bus.write_i2c_block_data(address, cmd_byte, arg_bytes)
+    sleep(0.1)
+
+    return absHum
 
 def crc(data):
     '''CRC8 algorithm
